@@ -1,1 +1,1 @@
-# EcoMInd
+# EcoMind
