@@ -1,12 +1,11 @@
 package http
 
 import (
-	"encoding/json"
 	"net/http"
 
 	repository "github.com/aygoko/EcoMInd/backend/domain"
 	"github.com/aygoko/EcoMInd/usecases/service"
-	"github.com/go-chi/chi/v5"
+	"github.com/gofiber/fiber/v2" // [[2]][[3]][[7]]
 )
 
 // UserHandler handles user-related HTTP endpoints
@@ -21,51 +20,45 @@ func NewUserHandler(s *service.UserService) *UserHandler {
 	}
 }
 
-// WithObjectHandlers registers user routes
-func (h *UserHandler) WithObjectHandlers(r *chi.Mux) {
-	r.Route("/api/users", func(r chi.Router) {
-		r.Post("/", h.CreateUser)
-		r.Get("/{login}", h.GetUserByLogin)
-	})
+// RegisterRoutes registers user routes with Fiber
+func (h *UserHandler) RegisterRoutes(app *fiber.App) {
+	apiGroup := app.Group("/api/users") // Create route group [[6]][[9]]
+
+	// POST /api/users
+	apiGroup.Post("/", h.CreateUser)
+
+	// GET /api/users/{login}
+	apiGroup.Get("/:login", h.GetUserByLogin)
 }
 
-// @Summary Create a new user
-// @Description Create a user with login, email, and password
-// @Tags Users
-// @Param user body repository.User true "User details"
-// @Success 201 {object} repository.User "Created user"
-// @Failure 400 {string} error "Invalid request or duplicate user"
-// @Router /api/users [post]
-func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+// CreateUser handles user creation
+func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 	var user repository.User
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+	if err := c.BodyParser(&user); err != nil { // Fiber's built-in parser [[6]][[9]]
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
 	}
 
 	createdUser, err := h.Service.Save(&user)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(createdUser)
+	return c.Status(http.StatusCreated).JSON(createdUser) // Fiber's JSON response [[6]]
 }
 
-// @Summary Get user by login
-// @Description Retrieve a user by their login
-// @Tags Users
-// @Param login path string true "User login"
-// @Success 200 {object} repository.User "User details"
-// @Failure 404 {string} error "User not found"
-// @Router /api/users/{login} [get]
-func (h *UserHandler) GetUserByLogin(w http.ResponseWriter, r *http.Request) {
-	login := chi.URLParam(r, "login")
+// GetUserByLogin retrieves user by login
+func (h *UserHandler) GetUserByLogin(c *fiber.Ctx) error {
+	login := c.Params("login") // Fiber's parameter extraction [[6]][[9]]
 	user, err := h.Service.Get(login)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{
+			"error": err.Error(),
+		})
 	}
-	json.NewEncoder(w).Encode(user)
+
+	return c.JSON(user) // Simplified response [[6]]
 }

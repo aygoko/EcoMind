@@ -2,6 +2,7 @@ package service
 
 import (
 	repository "github.com/aygoko/EcoMInd/backend/domain"
+	"github.com/google/uuid"
 )
 
 type UserService struct {
@@ -24,4 +25,8 @@ func (s *UserService) GetByEmail(email string) (*repository.User, error) {
 
 func (s *UserService) GetByPhoneNumber(phone_number string) (*repository.User, error) {
 	return s.Repo.GetByPhoneNumber(phone_number)
+}
+
+func GenerateUserID() string {
+	return uuid.New().String()
 }

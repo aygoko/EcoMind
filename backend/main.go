@@ -4,14 +4,12 @@ import (
 	"flag"
 	"log"
 
-	"net/http"
+	"github.com/gofiber/cors/v2"  // Fiber's CORS middleware [[5]]
+	"github.com/gofiber/fiber/v2" // Fiber framework [[2]][[5]]
 
 	pkgHttp "github.com/aygoko/EcoMInd/backend/api/user"
 	repository "github.com/aygoko/EcoMInd/backend/repository/ram_storage"
 	"github.com/aygoko/EcoMInd/backend/usecases/service"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 )
 
 func main() {
@@ -22,20 +20,19 @@ func main() {
 	userService := service.NewUserService(userRepo)
 	userHandler := pkgHttp.NewUserHandler(userService)
 
-	r := chi.NewRouter()
+	app := fiber.New()
 
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT"},
-		AllowedHeaders: []string{"*"},
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowMethods: []string{"GET", "POST", "PUT"},
+		AllowHeaders: "Origin, Content-Type, Accept",
 	}))
 
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	userHandler.WithObjectHandlers(r)
+	app.Use(fiber.Logger())
+	app.Use(fiber.Recovery())
 
 	log.Printf("Starting HTTP server on %s", *addr)
-	err := http.ListenAndServe(*addr, r)
+	err := app.Listen(*addr)
 	if err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
