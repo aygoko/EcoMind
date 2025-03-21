@@ -7,9 +7,12 @@ import (
 	"github.com/gofiber/cors/v2"  // Fiber's CORS middleware [[5]]
 	"github.com/gofiber/fiber/v2" // Fiber framework [[2]][[5]]
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gomodule/redigo/redis"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 
-	repository "github.com/aygoko/EcoMInd/backend/repository/database"
-	"github.com/aygoko/EcoMInd/backend/usecases/service"
+	repository "github.com/aygoko/EcoMind/backend/repository/database"
+	"github.com/aygoko/EcoMind/backend/usecases/service"
 )
 
 func main() {

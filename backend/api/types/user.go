@@ -3,8 +3,8 @@ package types
 import (
 	"errors"
 
-	"github.com/aygoko/EcoMInd/backend/repository"
-	"github.com/aygoko/EcoMInd/backend/usecases/service"
+	"github.com/aygoko/EcoMind/backend/repository"
+	"github.com/aygoko/EcoMind/backend/usecases/service"
 	"golang.org/x/crypto/bcrypt"
 )
 

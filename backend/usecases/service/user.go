@@ -1,7 +1,7 @@
 package service
 
 import (
-	repository "github.com/aygoko/EcoMInd/backend/domain"
+	repository "github.com/aygoko/EcoMind/backend/domain"
 	"github.com/google/uuid"
 )
 

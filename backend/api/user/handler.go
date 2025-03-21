@@ -3,8 +3,8 @@ package http
 import (
 	"net/http"
 
-	repository "github.com/aygoko/EcoMInd/backend/domain"
-	"github.com/aygoko/EcoMInd/usecases/service"
+	repository "github.com/aygoko/EcoMind/backend/domain"
+	"github.com/aygoko/EcoMind/usecases/service"
 	"github.com/gofiber/fiber/v2" // [[2]][[3]][[7]]
 )
 
