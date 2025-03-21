@@ -11,4 +11,5 @@ type UserService interface {
 	UpdateAuthToken(id uuid.UUID, token string) error
 	ValidatePassword(username, password string) (*User, error)
 	Save(*User) (*User, error)
+	Create(user *User) error
 }
