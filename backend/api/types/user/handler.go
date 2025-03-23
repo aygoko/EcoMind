@@ -1,71 +1,220 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
-	repository "github.com/aygoko/EcoMInd/backend/domain"
-	"github.com/aygoko/EcoMInd/usecases/service"
-	"github.com/go-chi/chi/v5"
+	"EcoMind/backend/domain"
+	"EcoMind/usecases/service"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v4"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // UserHandler handles user-related HTTP endpoints
 type UserHandler struct {
-	Service repository.UserService
+	UserService *service.UserService
 }
 
 // NewUserHandler creates a new user handler instance
 func NewUserHandler(s *service.UserService) *UserHandler {
 	return &UserHandler{
-		Service: s, // Direct assignment if service implements the interface
+		UserService: s,
 	}
 }
 
-// WithObjectHandlers registers user routes
-func (h *UserHandler) WithObjectHandlers(r *chi.Mux) {
-	r.Route("/api/users", func(r chi.Router) {
-		r.Post("/", h.CreateUser)
-		r.Get("/{login}", h.GetUserByLogin)
+// RegisterRoutes registers user routes with Fiber
+func (h *UserHandler) RegisterRoutes(app *fiber.App) {
+	apiGroup := app.Group("/api")
+
+	// Existing user routes
+	userGroup := apiGroup.Group("/users")
+	userGroup.Post("/", h.CreateUser)
+	userGroup.Get("/:login", h.GetUserByLogin)
+
+	// Authentication routes
+	authGroup := apiGroup.Group("/auth")
+	authGroup.Get("/google", h.GoogleAuthInit)
+	authGroup.Get("/google/callback", h.GoogleAuthCallback)
+	authGroup.Get("/tiktok", h.TikTokAuthInit)
+	authGroup.Get("/tiktok/callback", h.TikTokAuthCallback)
+}
+
+// GoogleAuthInit initiates Google authentication flow
+func (h *UserHandler) GoogleAuthInit(c *fiber.Ctx) error {
+	url := googleConfig.AuthCodeURL("state", oauth2.AccessTypeOnline)
+	return c.Redirect(url, 302)
+}
+
+// GoogleAuthCallback handles Google authentication callback
+func (h *UserHandler) GoogleAuthCallback(c *fiber.Ctx) error {
+	code := c.Query("code")
+	if code == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "Missing authorization code"})
+	}
+
+	// Exchange code for token
+	token, err := googleConfig.Exchange(context.Background(), code)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to exchange authorization code"})
+	}
+
+	// Get user info from Google
+	client := googleConfig.Client(context.Background(), token)
+	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to retrieve user info from Google"})
+	}
+	defer resp.Body.Close()
+
+	// Parse Google user info
+	var googleUser struct {
+		Email string `json:"email"`
+		Sub   string `json:"sub"` // Google's user ID
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&googleUser); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Invalid user info format"})
+	}
+
+	// Find or create user
+	user, err := h.UserService.FindOrCreateUserByProvider(
+		"google",
+		googleUser.Sub,
+		googleUser.Email,
+	)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Generate JWT token
+	tokenString, err := generateJWT(user.ID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to generate token"})
+	}
+
+	return c.JSON(fiber.Map{"token": tokenString})
+}
+
+// TikTokAuthInit initiates TikTok authentication flow
+func (h *UserHandler) TikTokAuthInit(c *fiber.Ctx) error {
+	url := tiktokConfig.AuthCodeURL("state", oauth2.AccessTypeOnline)
+	return c.Redirect(url, 302)
+}
+
+// TikTokAuthCallback handles TikTok authentication callback
+func (h *UserHandler) TikTokAuthCallback(c *fiber.Ctx) error {
+	code := c.Query("code")
+	if code == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "Missing authorization code"})
+	}
+
+	// Exchange code for token (TikTok requires custom handling)
+	token, err := tiktokConfig.Exchange(context.Background(), code)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to exchange authorization code"})
+	}
+
+	// Get user info from TikTok
+	resp, err := http.Get("https://open-api.tiktok.com/user/info/?access_token=" + token.AccessToken)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to retrieve user info from TikTok"})
+	}
+	defer resp.Body.Close()
+
+	// Parse TikTok user info
+	var tiktokUser struct {
+		User struct {
+			UserID   string `json:"user_id"`
+			NickName string `json:"nick_name"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tiktokUser); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Invalid user info format"})
+	}
+
+	// Find or create user
+	user, err := h.UserService.FindOrCreateUserByProvider(
+		"tiktok",
+		tiktokUser.User.UserID,
+		"", // TikTok doesn't provide email by default
+	)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Generate JWT token
+	tokenString, err := generateJWT(user.ID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to generate token"})
+	}
+
+	return c.JSON(fiber.Map{"token": tokenString})
+}
+
+// Existing methods remain unchanged
+func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
+	var user domain.User
+	if err := c.BodyParser(&user); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	createdUser, err := h.UserService.Create(&user)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.Status(http.StatusCreated).JSON(createdUser)
+}
+
+func (h *UserHandler) GetUserByLogin(c *fiber.Ctx) error {
+	login := c.Params("login")
+	user, err := h.UserService.Get(login)
+	if err != nil {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(user)
+}
+
+// JWT Generation Helper
+func generateJWT(userID string) (string, error) {
+	// JWT Secret (replace with a secure value in production)
+	jwtSecret := []byte("your-secure-jwt-secret")
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": userID,
+		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
+
+	return token.SignedString(jwtSecret)
 }
 
-// @Summary Create a new user
-// @Description Create a user with login, email, and password
-// @Tags Users
-// @Param user body repository.User true "User details"
-// @Success 201 {object} repository.User "Created user"
-// @Failure 400 {string} error "Invalid request or duplicate user"
-// @Router /api/users [post]
-func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	var user repository.User
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	createdUser, err := h.Service.Save(&user)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(createdUser)
+// OAuth2 Configurations (should be in separate config file)
+var googleConfig = &oauth2.Config{
+	ClientID:     "YOUR_GOOGLE_CLIENT_ID",
+	ClientSecret: "YOUR_GOOGLE_CLIENT_SECRET",
+	RedirectURL:  "http://localhost:3000/api/auth/google/callback",
+	Endpoint:     google.Endpoint,
+	Scopes:       []string{"openid", "email", "profile"},
 }
 
-// @Summary Get user by login
-// @Description Retrieve a user by their login
-// @Tags Users
-// @Param login path string true "User login"
-// @Success 200 {object} repository.User "User details"
-// @Failure 404 {string} error "User not found"
-// @Router /api/users/{login} [get]
-func (h *UserHandler) GetUserByLogin(w http.ResponseWriter, r *http.Request) {
-	login := chi.URLParam(r, "login")
-	user, err := h.Service.Get(login)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	json.NewEncoder(w).Encode(user)
+var tiktokConfig = &oauth2.Config{
+	ClientID:     "YOUR_TIKTOK_CLIENT_ID",
+	ClientSecret: "YOUR_TIKTOK_CLIENT_SECRET",
+	RedirectURL:  "http://localhost:3000/api/auth/tiktok/callback",
+	Endpoint: oauth2.Endpoint{
+		AuthURL:  "https://www.tiktok.com/v2/oauth/authorize/",
+		TokenURL: "https://open-api.tiktok.com/oauth/access_token/",
+	},
+	Scopes: []string{"user.info.basic"},
 }
