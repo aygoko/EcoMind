@@ -1,107 +1,122 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"log"
-	"net/http"
-	"text/template"
+    "flag"
+    "fmt"
+    "log"
 
-	pkgHttp "github.com/aygoko/EcoMInd/backend/api/types/user"
-	repository "github.com/aygoko/EcoMInd/backend/repository/ram_storage"
-	"github.com/aygoko/EcoMInd/backend/usecases/service"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/middleware/cors"
+    "github.com/gofiber/template/html/v3"
+
+    "github.com/aygoko/EcoMInd/backend/api/types/user"
+    repository "github.com/aygoko/EcoMInd/backend/repository/ram_storage"
+    "github.com/aygoko/EcoMInd/backend/usecases/service"
 )
 
 type PageData struct {
-	AgreementChecked bool
-	Message          string
+    AgreementChecked bool
+    Message          string
 }
 
 func main() {
-	addr := flag.String("addr", ":8080", "HTTP server address")
-	flag.Parse()
+    addr := flag.String("addr", ":8080", "HTTP server address")
+    flag.Parse()
 
-	userRepo := repository.NewUserRepository()
-	userService := service.NewUserService(userRepo)
-	userHandler := pkgHttp.NewUserHandler(userService)
+    userRepo := repository.NewUserRepository()
+    userService := service.NewUserService(userRepo)
+    userHandler := user.NewUserHandler(userService) // Adjust import path if needed
 
-	r := chi.NewRouter()
+    // Initialize Fiber app
+    app := fiber.New(fiber.Config{
+        Views: html.New("./views", ".html"), // Configure template engine
+    })
 
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT"},
-		AllowedHeaders: []string{"*"},
-	}))
+    // CORS Middleware
+    app.Use(cors.New(cors.Config{
+        AllowOrigins: "*",
+        AllowMethods: "GET,POST,PUT",
+        AllowHeaders: "Content-Type,Authorization",
+    }))
 
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	userHandler.WithObjectHandlers(r)
+    // Logging & Recovery Middleware
+    app.Use(func(c *fiber.Ctx) error {
+        log.Printf("%s %s %s", c.IP(), c.Method(), c.Path())
+        return c.Next()
+    })
+    app.Use(func(c *fiber.Ctx) error {
+        defer func() {
+            if r := recover(); r != nil {
+                log.Printf("Recovered from panic: %v", r)
+                c.Status(500).Send("Internal Server Error")
+            }
+        }()
+        return c.Next()
+    })
 
-	log.Printf("Starting HTTP server on %s", *addr)
-	err := http.ListenAndServe(*addr, r)
-	if err != nil {
-		log.Fatalf("Server failed: %v", err)
-	}
+    
+    userHandler.WithObjectHandlers(app) // Assuming your handler can use Fiber's router
+
+    
+    app.Get("/", showForm)
+    app.Post("/submit", handleFormSubmission)
+
+    log.Printf("Starting HTTP server on %s", *addr)
+    err := app.Listen(*addr)
+    if err != nil {
+        log.Fatalf("Server failed: %v", err)
+    }
 }
 
-func showForm(w http.ResponseWriter, r *http.Request) {
-	const formHTML = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Пользовательское соглашение</title>
-    </head>
-    <body>
-        <h1>Пользовательское соглашение</h1>
-        <form action="/submit" method="POST">
-            <p>Прочитайте соглашение и поставьте галочку:</p>
-            <label>
-                <input type="checkbox" name="agreement" value="agree">
-                Я согласен с пользовательским соглашением
-            </label><br><br>
-            <button type="submit">Отправить</button>
-        </form>
-        {{if .Message}}
-            <p>{{.Message}}</p>
-        {{end}}
-    </body>
-    </html>
-    `
-	tmpl, err := template.New("form").Parse(formHTML)
-	if err != nil {
-		http.Error(w, "Ошибка при парсинге шаблона", http.StatusInternalServerError)
-		return
-	}
+func showForm(c *fiber.Ctx) error {
+    data := PageData{
+        AgreementChecked: false,
+        Message:          c.Query("message", ""),
+    }
 
-	data := PageData{
-		AgreementChecked: false,
-		Message:          "",
-	}
-
-	err = tmpl.Execute(w, data)
-	if err != nil {
-		http.Error(w, "Ошибка при рендеринге шаблона", http.StatusInternalServerError)
-	}
+    
+    return c.RenderString(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Пользовательское соглашение</title>
+        </head>
+        <body>
+            <h1>Пользовательское соглашение</h1>
+            <form action="/submit" method="POST">
+                <p>Прочитайте соглашение и поставьте галочку:</p>
+                <label>
+                    <input type="checkbox" name="agreement" value="agree">
+                    Я согласен с пользовательским соглашением
+                </label><br><br>
+                <button type="submit">Отправить</button>
+            </form>
+            {{if .Message}}
+                <p>{{.Message}}</p>
+            {{end}}
+        </body>
+        </html>`, data, "form")
 }
 
-func handleFormSubmission(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseForm()
-	if err != nil {
-		http.Error(w, "Ошибка при разборе формы", http.StatusBadRequest)
-		return
-	}
+func handleFormSubmission(c *fiber.Ctx) error {
+    form := new(struct {
+        Agreement string `form:"agreement"`
+    })
 
-	agreement := r.FormValue("agreement") == "agree"
+    err := c.BodyParser(form)
+    if err != nil {
+        return c.Status(400).Send("Ошибка при разборе формы")
+    }
 
-	var message string
-	if agreement {
-		message = "Спасибо! Вы согласились с пользовательским соглашением."
-	} else {
-		message = "Вы не согласились с пользовательским соглашением. Пожалуйста, поставьте галочку."
-	}
+    agreement := form.Agreement == "agree"
 
-	http.Redirect(w, r, fmt.Sprintf("/?message=%s", message), http.StatusSeeOther)
+    var message string
+    if agreement {
+        message = "Спасибо! Вы согласились с пользовательским соглашением."
+    } else {
+        message = "Вы не согласились с пользовательским соглашением. Пожалуйста, поставьте галочку."
+    }
+
+    
+    return c.Redirect(fmt.Sprintf("/?message=%s", message), 303)
 }
