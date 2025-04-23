@@ -23,7 +23,7 @@ type Logger interface {
     Infof(format string, args ...interface{})
 }
 
-// Default logger (replace with a structured logging library like zap or logrus in production)
+// Default logger (replace with a structured logging library like zap in production)
 var logger Logger = &defaultLogger{}
 
 type defaultLogger struct{}
@@ -38,7 +38,14 @@ func (l *defaultLogger) Infof(format string, args ...interface{}) {
 
 // Helper function to scan a database row into a User struct
 func scanUserRow(row *sql.Row, user *domain.User) error {
-    return row.Scan(&user.Login, &user.Email, &user.PhoneNumber)
+    // Ensure all fields are included (ID, Login, Email, PhoneNumber, CO2)
+    return row.Scan(
+        &user.ID,
+        &user.Login,
+        &user.Email,
+        &user.PhoneNumber,
+        &user.CO2, // Added CO2
+    )
 }
 
 // UserRepositoryDB implements the UserService interface
@@ -51,7 +58,7 @@ type UserRepositoryDB struct {
 // NewUserRepository creates a new user repository instance
 func NewUserRepository(db *sql.DB, redisClient *redis.Client, logger Logger) domain.UserService {
     if logger == nil {
-        logger = &defaultLogger{}
+        panic("logger must not be nil in production") // Fail fast if no logger
     }
     return &UserRepositoryDB{
         DB:          db,
@@ -61,14 +68,14 @@ func NewUserRepository(db *sql.DB, redisClient *redis.Client, logger Logger) dom
 }
 
 // CacheUser stores the user in Redis cache
-func (r *UserRepositoryDB) cacheUser(user *domain.User) error {
+func (r *UserRepositoryDB) cacheUser(ctx context.Context, user *domain.User) error {
     key := redisUserKeyPrefix + user.Login
     userJSON, err := json.Marshal(user)
     if err != nil {
         r.Logger.Errorf("failed to marshal user for caching: %v", err)
         return err
     }
-    err = r.RedisClient.Set(context.Background(), key, userJSON, cacheTTL).Err()
+    err = r.RedisClient.Set(ctx, key, userJSON, cacheTTL).Err()
     if err != nil {
         r.Logger.Errorf("failed to cache user in Redis: %v", err)
         return err
@@ -78,9 +85,9 @@ func (r *UserRepositoryDB) cacheUser(user *domain.User) error {
 }
 
 // InvalidateCache removes a user from the Redis cache
-func (r *UserRepositoryDB) invalidateCache(login string) error {
+func (r *UserRepositoryDB) invalidateCache(ctx context.Context, login string) error {
     key := redisUserKeyPrefix + login
-    err := r.RedisClient.Del(context.Background(), key).Err()
+    err := r.RedisClient.Del(ctx, key).Err()
     if err != nil {
         r.Logger.Errorf("failed to invalidate cache for user: %s, error: %v", login, err)
         return err
@@ -90,11 +97,11 @@ func (r *UserRepositoryDB) invalidateCache(login string) error {
 }
 
 // Get retrieves a user by login with cache check
-func (r *UserRepositoryDB) Get(login string) (*domain.User, error) {
+func (r *UserRepositoryDB) Get(ctx context.Context, login string) (*domain.User, error) {
     key := redisUserKeyPrefix + login
 
     // Check Redis cache first
-    userJSON, err := r.RedisClient.Get(context.Background(), key).Result()
+    userJSON, err := r.RedisClient.Get(ctx, key).Result()
     if err == nil {
         var user domain.User
         if err := json.Unmarshal([]byte(userJSON), &user); err != nil {
@@ -109,7 +116,11 @@ func (r *UserRepositoryDB) Get(login string) (*domain.User, error) {
     }
 
     // Query database if not found in cache
-    row := r.DB.QueryRow("SELECT login, email, phone_number FROM users WHERE login = $1", login)
+    row := r.DB.QueryRowContext(
+        ctx,
+        "SELECT id, login, email, phone_number, CO2 FROM users WHERE login = $1", // Include ID and CO2
+        login,
+    )
     var user domain.User
     if err := scanUserRow(row, &user); err != nil {
         if errors.Is(err, sql.ErrNoRows) {
@@ -121,7 +132,7 @@ func (r *UserRepositoryDB) Get(login string) (*domain.User, error) {
     }
 
     // Cache the result in Redis
-    if err := r.cacheUser(&user); err != nil {
+    if err := r.cacheUser(ctx, &user); err != nil {
         r.Logger.Errorf("failed to cache user after database fetch: %v", err)
     }
 
@@ -130,8 +141,12 @@ func (r *UserRepositoryDB) Get(login string) (*domain.User, error) {
 }
 
 // GetByEmail retrieves a user by email
-func (r *UserRepositoryDB) GetByEmail(email string) (*domain.User, error) {
-    row := r.DB.QueryRow("SELECT login, email, phone_number FROM users WHERE email = $1", email)
+func (r *UserRepositoryDB) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
+    row := r.DB.QueryRowContext(
+        ctx,
+        "SELECT id, login, email, phone_number, CO2 FROM users WHERE email = $1", // Include ID and CO2
+        email,
+    )
     var user domain.User
     if err := scanUserRow(row, &user); err != nil {
         if errors.Is(err, sql.ErrNoRows) {
@@ -143,7 +158,7 @@ func (r *UserRepositoryDB) GetByEmail(email string) (*domain.User, error) {
     }
 
     // Cache the user in Redis
-    if err := r.cacheUser(&user); err != nil {
+    if err := r.cacheUser(ctx, &user); err != nil {
         r.Logger.Errorf("failed to cache user after database fetch: %v", err)
     }
 
@@ -152,8 +167,12 @@ func (r *UserRepositoryDB) GetByEmail(email string) (*domain.User, error) {
 }
 
 // GetByPhoneNumber retrieves a user by phone number
-func (r *UserRepositoryDB) GetByPhoneNumber(phoneNumber string) (*domain.User, error) {
-    row := r.DB.QueryRow("SELECT login, email, phone_number FROM users WHERE phone_number = $1", phoneNumber)
+func (r *UserRepositoryDB) GetByPhoneNumber(ctx context.Context, phoneNumber string) (*domain.User, error) {
+    row := r.DB.QueryRowContext(
+        ctx,
+        "SELECT id, login, email, phone_number, CO2 FROM users WHERE phone_number = $1", // Include ID and CO2
+        phoneNumber,
+    )
     var user domain.User
     if err := scanUserRow(row, &user); err != nil {
         if errors.Is(err, sql.ErrNoRows) {
@@ -165,7 +184,7 @@ func (r *UserRepositoryDB) GetByPhoneNumber(phoneNumber string) (*domain.User, e
     }
 
     // Cache the user in Redis
-    if err := r.cacheUser(&user); err != nil {
+    if err := r.cacheUser(ctx, &user); err != nil {
         r.Logger.Errorf("failed to cache user after database fetch: %v", err)
     }
 
@@ -174,15 +193,23 @@ func (r *UserRepositoryDB) GetByPhoneNumber(phoneNumber string) (*domain.User, e
 }
 
 // UpdateUser updates user data and invalidates the cache
-func (r *UserRepositoryDB) UpdateUser(user *domain.User) error {
-    _, err := r.DB.Exec("UPDATE users SET email = $1, phone_number = $2 WHERE login = $3", user.Email, user.PhoneNumber, user.Login)
+func (r *UserRepositoryDB) UpdateUser(ctx context.Context, user *domain.User) error {
+    // Include all fields to update (e.g., CO2)
+    _, err := r.DB.ExecContext(
+        ctx,
+        "UPDATE users SET email = $1, phone_number = $2, CO2 = $3 WHERE login = $4", // Include CO2
+        user.Email,
+        user.PhoneNumber,
+        user.CO2, // Added CO2
+        user.Login,
+    )
     if err != nil {
         r.Logger.Errorf("failed to update user in database: %v", err)
         return err
     }
 
     // Invalidate cache
-    if err := r.invalidateCache(user.Login); err != nil {
+    if err := r.invalidateCache(ctx, user.Login); err != nil {
         r.Logger.Errorf("failed to invalidate cache after user update: %v", err)
     }
 
