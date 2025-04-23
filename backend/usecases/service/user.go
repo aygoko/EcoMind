@@ -1,7 +1,7 @@
 package service
 
 import (
-    "github.com/aygoko/EcoMInd/backend/domain"
+    "github.com/aygoko/EcoMind/backend/domain"
 )
 
 // UserService implements business logic for user operations.
