@@ -1,0 +1,63 @@
+import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+
+class CircularProgressBar extends StatelessWidget {
+  final ProgressBloc bloc;
+
+  const CircularProgressBar({Key? key, required this.bloc}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<ProgressState>(
+      stream: bloc.stateStream,
+      initialData: ProgressState(progress: 0, goal: 0),
+      builder: (context, snapshot) {
+        final state = snapshot.data!;
+        return Container(
+          margin: const EdgeInsets.only(bottom: 20),
+          alignment: Alignment.center,
+          child: Column(
+            children: [
+              Container(
+                width: 250,
+                height: 220,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E2E2),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: PieChart(
+                  PieChartData(
+                    sections: [
+                      PieChartSectionData(
+                        value: state.progress.toDouble(),
+                        color: const Color.fromRGBO(46, 204, 113, 1),
+                        title: '',
+                        radius: 100,
+                      ),
+                      PieChartSectionData(
+                        value: (state.goal - state.progress).toDouble(),
+                        color: const Color.fromRGBO(226, 226, 226, 1),
+                        title: '',
+                        radius: 100,
+                      ),
+                    ],
+                    centerSpaceRadius: 80,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${state.progress}/${state.goal}',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color.fromRGBO(46, 204, 113, 1),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
