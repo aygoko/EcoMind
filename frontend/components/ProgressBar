@@ -1,0 +1,28 @@
+class ProgressBloc {
+  final _stateController = StreamController<ProgressState>();
+  Stream<ProgressState> get stateStream => _stateController.stream;
+
+  int _progress = 0;
+  int _goal = 0;
+
+  void updateProgress(int progress) {
+    _progress = progress;
+    _stateController.add(ProgressState(progress: progress, goal: _goal));
+  }
+
+  void updateGoal(int goal) {
+    _goal = goal;
+    _stateController.add(ProgressState(progress: _progress, goal: goal));
+  }
+
+  void dispose() {
+    _stateController.close();
+  }
+}
+
+class ProgressState {
+  final int progress;
+  final int goal;
+
+  ProgressState({required this.progress, required this.goal});
+}
